@@ -1,16 +1,16 @@
-"""Embex — Local-first memory layer for AI agents."""
+"""Embex — Local code embedding and search tool for your codebase."""
 
-# Apply Python 3.14 compatibility patch for chromadb/pydantic.v1
-# MUST run before any module imports chromadb.
-import sys as _sys
+import sys
 import warnings
 
 # Suppress Pydantic V1 compatibility warning
 warnings.filterwarnings("ignore", message=".*Pydantic V1 functionality.*")
 
-if _sys.version_info >= (3, 14):
+# Patch for Python 3.14+ compatibility with chromadb
+if sys.version_info >= (3, 14):
     try:
         import pydantic.v1.fields as _pv1_fields
+        import typing
 
         _orig_init = _pv1_fields.ModelField.__init__
 
@@ -19,7 +19,7 @@ if _sys.version_info >= (3, 14):
                 _orig_init(self, *args, **kwargs)
             except Exception as exc:
                 if "unable to infer type" in str(exc):
-                    import typing
+                    # Fallback: set minimal attributes so chromadb doesn't crash
                     self.name = kwargs.get("name", "unknown")
                     self.type_ = typing.Any
                     self.outer_type_ = typing.Any
@@ -27,12 +27,8 @@ if _sys.version_info >= (3, 14):
                     self.default = kwargs.get("default", None)
                     self.default_factory = kwargs.get("default_factory", None)
                     self.required = False
-                    self.model_config = kwargs.get(
-                        "model_config", type("Config", (), {})
-                    )
-                    self.field_info = kwargs.get(
-                        "field_info", _pv1_fields.FieldInfo()
-                    )
+                    self.model_config = kwargs.get("model_config", type("Config", (), {}))
+                    self.field_info = kwargs.get("field_info", _pv1_fields.FieldInfo())
                     self.allow_none = True
                     self.validate_always = False
                     self.sub_fields = None
@@ -53,4 +49,3 @@ if _sys.version_info >= (3, 14):
         _pv1_fields.ModelField.__init__ = _patched_field_init
     except Exception:
         pass
-

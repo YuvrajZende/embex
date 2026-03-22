@@ -1,0 +1,13 @@
+# Embex - Embed your codebase for AI-powered search
+
+# Core dependencies
+typer>=0.9.0
+chromadb>=0.4.0
+openai>=1.0.0
+pydantic>=2.0.0
+sentence-transformers>=2.2.0
+python-dotenv>=1.0.0
+rich>=13.0.0
+
+# File watching
+watchdog>=3.0.0

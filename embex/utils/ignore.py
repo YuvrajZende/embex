@@ -1,57 +1,37 @@
 """
-Ignore-rules engine — decide whether a file should be skipped.
-
-Checks against the exclude_dirs, exclude_files, and include_extensions
-lists defined in EmbexConfig.watch.
+Ignore rules — decides if a file should be skipped during scanning.
 """
-
-from __future__ import annotations
 
 import fnmatch
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from embex.config import EmbexConfig
 
 
-def should_ignore(file_path: str | Path, project_root: str | Path, config: "EmbexConfig") -> bool:
-    """Return ``True`` if *file_path* should be skipped based on config rules.
-
-    Parameters
-    ----------
-    file_path:
-        Absolute or relative path to the file.
-    project_root:
-        The project root directory (used to compute relative paths).
-    config:
-        Loaded EmbexConfig instance.
-    """
+def should_ignore(file_path, project_root, config):
+    """Check if a file should be ignored based on config rules."""
     path = Path(file_path).resolve()
     root = Path(project_root).resolve()
 
-    # Compute relative path using forward slashes for consistent matching
+    # Get relative path
     try:
         rel = path.relative_to(root)
     except ValueError:
-        # File is outside project — ignore it
-        return True
+        return True  # file is outside project
 
     rel_posix = PurePosixPath(rel)
     watch = config.watch
 
-    # 1. Check exclude_dirs — any directory component matches?
-    for part in rel_posix.parts[:-1]:  # all but the filename
+    # Check if any parent directory is excluded
+    for part in rel_posix.parts[:-1]:
         if part in watch.exclude_dirs:
             return True
 
-    # 2. Check exclude_files — filename glob patterns
+    # Check if filename matches any exclude pattern
     filename = rel_posix.name
     for pattern in watch.exclude_files:
         if fnmatch.fnmatch(filename, pattern):
             return True
 
-    # 3. Check include_extensions — file must have an allowed extension
+    # Check if file extension is in the allowed list
     ext = path.suffix.lower()
     if ext not in watch.include_extensions:
         return True
@@ -59,15 +39,15 @@ def should_ignore(file_path: str | Path, project_root: str | Path, config: "Embe
     return False
 
 
-def get_relative_path(file_path: str | Path, project_root: str | Path) -> str:
-    """Return the POSIX-style relative path of *file_path* from *project_root*."""
+def get_relative_path(file_path, project_root):
+    """Get the relative path of a file from the project root (forward slashes)."""
     path = Path(file_path).resolve()
     root = Path(project_root).resolve()
     return PurePosixPath(path.relative_to(root)).as_posix()
 
 
-def get_folder(file_path: str | Path, project_root: str | Path) -> str:
-    """Return the folder portion of the relative path (or ``'.'`` for root)."""
+def get_folder(file_path, project_root):
+    """Get just the folder part of the relative path (or '.' for root files)."""
     rel = get_relative_path(file_path, project_root)
     parts = rel.split("/")
     if len(parts) <= 1:

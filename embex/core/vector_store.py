@@ -1,104 +1,54 @@
 """
-VectorStore — ChromaDB operations for storing and querying code embeddings.
-
-Uses a persistent ChromaDB client stored in ``.embex/chroma/``.
-Collections are namespaced by folder path.
+VectorStore — stores and queries code embeddings using ChromaDB.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
-from typing import Any
-
 import chromadb
 
 
-def _collection_name(folder: str) -> str:
-    """Convert a folder path into a valid ChromaDB collection name.
-
-    ChromaDB collection names must:
-    - be 3-63 chars, start/end with alphanumeric
-    - contain only alphanumerics, underscores, hyphens
-    """
+def _collection_name(folder):
+    """Convert a folder path to a valid ChromaDB collection name."""
     if folder in (".", "", "/"):
         return "root"
     name = folder.replace("/", "_").replace("\\", "_")
-    # Strip leading/trailing non-alphanumeric characters
     name = name.strip("_-.")
-    # Ensure minimum length
     if len(name) < 3:
         name = name + "_col"
-    # Truncate to 63
     if len(name) > 63:
         name = name[:63].rstrip("_-")
     return name
 
 
 class VectorStore:
-    """Thin wrapper around a persistent ChromaDB client."""
+    """Wrapper around ChromaDB for storing and searching code chunk embeddings."""
 
-    def __init__(self, chroma_dir: str | Path) -> None:
-        self._chroma_dir = Path(chroma_dir)
-        self._chroma_dir.mkdir(parents=True, exist_ok=True)
-        self._client = chromadb.PersistentClient(path=str(self._chroma_dir))
+    def __init__(self, chroma_dir):
+        self.chroma_dir = Path(chroma_dir)
+        self.chroma_dir.mkdir(parents=True, exist_ok=True)
+        self._client = chromadb.PersistentClient(path=str(self.chroma_dir))
 
-    # ------------------------------------------------------------------
-    # Collection management
-    # ------------------------------------------------------------------
-
-    def get_or_create_collection(self, folder: str) -> chromadb.Collection:
-        """Return (or create) the collection for a given folder path."""
+    def get_or_create_collection(self, folder):
+        """Get or create a ChromaDB collection for the given folder."""
         name = _collection_name(folder)
         return self._client.get_or_create_collection(
             name=name,
             metadata={"folder": folder},
         )
 
-    # ------------------------------------------------------------------
-    # Write operations
-    # ------------------------------------------------------------------
-
-    def upsert_file(
-        self,
-        file_path: str,
-        folder: str,
-        chunks: list[str],
-        embeddings: list[list[float]],
-        metadata_base: dict[str, Any],
-        chunk_metadatas: list[dict[str, Any]] | None = None,
-    ) -> int:
-        """Delete old chunks for *file_path* and insert new ones.
-
-        Parameters
-        ----------
-        file_path:
-            Relative POSIX path used as the foreign key.
-        folder:
-            Folder path that determines the collection.
-        chunks:
-            List of chunk texts.
-        embeddings:
-            Corresponding embedding vectors.
-        metadata_base:
-            Shared metadata dict (file_path, language, etc.).
-
-        Returns
-        -------
-        int
-            Number of chunks inserted.
-        """
+    def upsert_file(self, file_path, folder, chunks, embeddings, metadata_base, chunk_metadatas=None):
+        """Delete old chunks for a file and insert new ones. Returns number of chunks inserted."""
         collection = self.get_or_create_collection(folder)
 
-        # Delete any existing chunks for this file
+        # Remove existing chunks for this file first
         self.delete_file(file_path, folder)
 
         if not chunks:
             return 0
 
-        ids: list[str] = []
-        documents: list[str] = []
-        metadatas: list[dict[str, Any]] = []
-        embeds: list[list[float]] = []
+        ids = []
+        documents = []
+        metadatas = []
+        embeds = []
 
         for i, (chunk_text, embedding) in enumerate(zip(chunks, embeddings)):
             doc_id = f"{file_path}::{i}"
@@ -122,48 +72,19 @@ class VectorStore:
         )
         return len(ids)
 
-    def delete_file(self, file_path: str, folder: str) -> None:
-        """Remove all chunks belonging to *file_path* from its collection."""
+    def delete_file(self, file_path, folder):
+        """Remove all chunks for a file from its collection."""
         collection = self.get_or_create_collection(folder)
-        # ChromaDB where filter to find all docs with this file_path
         try:
-            existing = collection.get(
-                where={"file_path": file_path},
-            )
+            existing = collection.get(where={"file_path": file_path})
             if existing["ids"]:
                 collection.delete(ids=existing["ids"])
         except Exception:
-            # Collection might be empty or filter might not match — that's fine
-            pass
+            pass  # collection might be empty
 
-    # ------------------------------------------------------------------
-    # Read operations
-    # ------------------------------------------------------------------
-
-    def query(
-        self,
-        query_embedding: list[float],
-        folder: str | None = None,
-        top_k: int = 5,
-    ) -> list[dict[str, Any]]:
-        """Search for the most similar chunks.
-
-        Parameters
-        ----------
-        query_embedding:
-            The embedding vector for the query.
-        folder:
-            Optional folder to scope the search. If ``None``, searches
-            all collections.
-        top_k:
-            Maximum number of results.
-
-        Returns
-        -------
-        list[dict]
-            Each dict has: ``file_path``, ``chunk_index``, ``score``, ``preview``.
-        """
-        results: list[dict[str, Any]] = []
+    def query(self, query_embedding, folder=None, top_k=5):
+        """Search for the most similar chunks. Returns a list of result dicts."""
+        results = []
 
         if folder:
             collections = [self.get_or_create_collection(folder)]
@@ -193,20 +114,17 @@ class VectorStore:
                 res["metadatas"][0],
                 res["distances"][0],
             ):
-                # ChromaDB returns L2 distance by default; lower is better.
-                # Convert to a 0-1 similarity score.
+                # Convert L2 distance to similarity score (0-1, higher = better)
                 score = 1.0 / (1.0 + dist)
-                results.append(
-                    {
-                        "file_path": meta.get("file_path", ""),
-                        "chunk_index": meta.get("chunk_index", 0),
-                        "score": score,
-                        "preview": (doc or "")[:200],
-                        "folder": meta.get("folder", ""),
-                        "language": meta.get("language", ""),
-                    }
-                )
+                results.append({
+                    "file_path": meta.get("file_path", ""),
+                    "chunk_index": meta.get("chunk_index", 0),
+                    "score": score,
+                    "preview": (doc or "")[:200],
+                    "folder": meta.get("folder", ""),
+                    "language": meta.get("language", ""),
+                })
 
-        # Sort by score descending and return top_k
+        # Sort by score (best matches first)
         results.sort(key=lambda r: r["score"], reverse=True)
         return results[:top_k]

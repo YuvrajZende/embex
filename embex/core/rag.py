@@ -1,79 +1,29 @@
 """
-Corrective RAG (CRAG) pipeline for Embex.
+RAG (Retrieval-Augmented Generation) pipeline for Embex.
 
-Flow:
-  1. Retrieve top-k code chunks via semantic search.
-  2. Score each chunk for relevance to the query (cosine similarity threshold).
-  3. If enough relevant chunks found  → use them as context.
-     If too few                       → fall back to the full retrieved set.
-  4. Call the z.ai LLM (GLM models) with the chunks as grounding context
-     and return a natural-language answer.
-
-The LLM is given a strict system prompt that tells it to:
-  - Cite the file path for every claim.
-  - Say "I don't know" if the code doesn't contain the answer.
-  - Never hallucinate code that isn't in the retrieved chunks.
+How it works:
+  1. Search for relevant code chunks using embeddings
+  2. Filter chunks by similarity score
+  3. Send the relevant chunks to the LLM as context
+  4. Return the LLM's answer with source citations
 """
 
-from __future__ import annotations
-
 import os
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from embex.config import EmbexConfig
-
-# Minimum similarity score (0-1) for a chunk to be considered "relevant".
-_RELEVANCE_THRESHOLD = 0.30
-
-# How much of each chunk to include in the context window (chars).
-_MAX_CHUNK_CHARS = 1_200
 
 
-# ---------------------------------------------------------------------------
-# Main public entry point
-# ---------------------------------------------------------------------------
+# Default settings
+RELEVANCE_THRESHOLD = 0.30  # minimum similarity score to count as relevant
+MAX_CHUNK_CHARS = 1200      # max characters per chunk to send to LLM
 
-def ask(
-    question: str,
-    *,
-    config: "EmbexConfig",
-    embedder,
-    vector_store,
-    top_k: int = 8,
-    folder: str | None = None,
-    relevance_threshold: float | None = None,
-) -> dict[str, Any]:
-    """Run the full CRAG pipeline and return a structured result.
 
-    Parameters
-    ----------
-    question:
-        The natural-language question from the user or agent.
-    config:
-        The loaded EmbexConfig.
-    embedder:
-        An initialised ``Embedder`` instance.
-    vector_store:
-        An initialised ``VectorStore`` instance.
-    top_k:
-        How many chunks to retrieve initially.
-    folder:
-        Optional folder scope for retrieval.
-    relevance_threshold:
-        Override the default similarity threshold.
-
-    Returns
-    -------
-    dict with keys:
-        - ``answer``  (str)  — LLM-generated answer grounded in the code.
-        - ``sources`` (list) — list of dicts: file_path, score, preview.
-        - ``relevant_count`` (int) — number of chunks above the threshold.
-        - ``total_retrieved`` (int) — total retrieved before filtering.
+def ask(question, config, embedder, vector_store, top_k=8, folder=None, relevance_threshold=None):
+    """Run the RAG pipeline: retrieve chunks, filter, generate answer.
+    
+    Returns a dict with: answer, sources, relevant_count, total_retrieved.
     """
-    threshold = relevance_threshold if relevance_threshold is not None else _RELEVANCE_THRESHOLD
+    threshold = relevance_threshold if relevance_threshold is not None else RELEVANCE_THRESHOLD
 
-    # ── Step 1: Retrieve ────────────────────────────────────────────────
+    # Step 1: Search for relevant code chunks
     query_embedding = embedder.embed_query(question)
     results = vector_store.query(
         query_embedding=query_embedding,
@@ -81,16 +31,16 @@ def ask(
         top_k=top_k,
     )
 
-    # ── Step 2: Corrective filter ───────────────────────────────────────
+    # Step 2: Filter by relevance score
     relevant = [r for r in results if r["score"] >= threshold]
-    # If nothing cleared the threshold, fall back to the entire retrieved set
+    # If nothing is relevant enough, use all results as fallback
     context_chunks = relevant if relevant else results
 
-    # ── Step 3: Build context string ────────────────────────────────────
-    context_parts: list[str] = []
-    sources: list[dict] = []
+    # Step 3: Build the context string for the LLM
+    context_parts = []
+    sources = []
     for r in context_chunks:
-        preview = r.get("preview", "")[:_MAX_CHUNK_CHARS]
+        preview = r.get("preview", "")[:MAX_CHUNK_CHARS]
         context_parts.append(
             f"### {r['file_path']} (chunk #{r['chunk_index']}, score={r['score']:.3f})\n"
             f"```\n{preview}\n```"
@@ -106,12 +56,8 @@ def ask(
 
     context_str = "\n\n".join(context_parts) if context_parts else "(No code chunks retrieved.)"
 
-    # ── Step 4: Call LLM ────────────────────────────────────────────────
-    answer = _call_llm(
-        question=question,
-        context=context_str,
-        config=config,
-    )
+    # Step 4: Call the LLM to generate an answer
+    answer = _call_llm(question, context_str, config)
 
     return {
         "answer": answer,
@@ -121,11 +67,8 @@ def ask(
     }
 
 
-# ---------------------------------------------------------------------------
-# LLM call helpers
-# ---------------------------------------------------------------------------
-
-_SYSTEM_PROMPT = """\
+# System prompt that tells the LLM how to behave
+SYSTEM_PROMPT = """\
 You are Embex, an expert code assistant with deep knowledge of the project's codebase.
 You are given retrieved code chunks from the project as grounding context.
 
@@ -140,14 +83,32 @@ Rules:
 """
 
 
-def _call_llm(question: str, context: str, config: "EmbexConfig") -> str:
-    """Call the z.ai LLM with the question and retrieved context."""
-    return _call_zai(question, context, config)
+def _call_llm(question, context, config):
+    """Call the z.ai LLM API to generate an answer."""
+    # Load environment variables
+    try:
+        from dotenv import load_dotenv
+        from pathlib import Path
+        load_dotenv()
+        load_dotenv(dotenv_path=Path.home() / ".embex" / ".env", override=False)
+    except ImportError:
+        pass
 
+    from openai import OpenAI
 
-def _build_messages(question: str, context: str) -> list[dict]:
-    return [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+    api_key = os.environ.get(config.llm.api_key_env)
+    if not api_key:
+        raise EnvironmentError(
+            f"API key not set. Set the '{config.llm.api_key_env}' environment variable."
+        )
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.z.ai/api/paas/v4/",
+    )
+
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
@@ -159,35 +120,13 @@ def _build_messages(question: str, context: str) -> list[dict]:
         },
     ]
 
-
-def _call_zai(question: str, context: str, config: "EmbexConfig") -> str:
-    """Call the z.ai API (GLM models, OpenAI-compatible)."""
-    try:
-        from dotenv import load_dotenv
-        from pathlib import Path as _Path
-        load_dotenv()  # project-local .env
-        load_dotenv(dotenv_path=_Path.home() / ".embex" / ".env", override=False)  # global fallback
-    except ImportError:
-        pass
-
-    from openai import OpenAI
-
-    api_key = os.environ.get(config.llm.api_key_env)
-    if not api_key:
-        raise EnvironmentError(
-            f"Z.ai API key not set. Set the '{config.llm.api_key_env}' environment variable."
-        )
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.z.ai/api/paas/v4/",
-    )
     response = client.chat.completions.create(
         model=config.llm.model or "glm-4.7-flash",
-        messages=_build_messages(question, context),
+        messages=messages,
         extra_body={"thinking": {"type": "disabled"}},
         temperature=0.7,
         max_tokens=2048,
     )
+
     msg = response.choices[0].message
     return msg.content or getattr(msg, "reasoning_content", None) or ""

@@ -1,12 +1,10 @@
 """
-embex explain — use an LLM to summarize what a file does.
+embex explain — summarize what a file does.
 
-Supports two modes:
-  - Static analysis (default, free) — extracts imports, functions, classes, docstrings
-  - LLM-powered (--llm flag) — sends code to z.ai (GLM models) for a natural language summary
+Two modes:
+  - Static analysis (default, free) — shows imports, functions, classes, docstrings
+  - LLM-powered (--llm flag) — sends code to z.ai for a natural language summary
 """
-
-from __future__ import annotations
 
 import typer
 from pathlib import Path
@@ -20,8 +18,8 @@ from rich.panel import Panel
 from rich import box
 
 
-def _static_analysis(content: str, norm_path: str) -> list[str]:
-    """Perform static code analysis and return summary lines."""
+def _static_analysis(content, norm_path):
+    """Analyze code statically and return summary lines."""
     lines = content.split("\n")
     total_lines = len(lines)
 
@@ -50,7 +48,7 @@ def _static_analysis(content: str, norm_path: str) -> list[str]:
         for fn in functions:
             parts.append(f"  [dim]•[/dim] {fn}")
 
-    # Docstrings
+    # Extract and show docstrings
     docstrings = _extract_docstrings(lines)
     if docstrings:
         parts.append(f"\n[bold blue]Purpose:[/bold blue]")
@@ -61,11 +59,12 @@ def _static_analysis(content: str, norm_path: str) -> list[str]:
     return parts
 
 
-def _extract_docstrings(lines: list[str]) -> list[str]:
-    """Extract module/class/function docstrings."""
+def _extract_docstrings(lines):
+    """Pull out module/class/function docstrings from the source."""
     docstrings = []
     in_docstring = False
-    current_doc: list[str] = []
+    current_doc = []
+
     for line in lines:
         stripped = line.strip()
         if stripped.startswith('"""') or stripped.startswith("'''"):
@@ -83,17 +82,17 @@ def _extract_docstrings(lines: list[str]) -> list[str]:
                 current_doc = [stripped.lstrip("\"'").lstrip("'")]
         elif in_docstring:
             current_doc.append(stripped)
+
     return docstrings
 
 
-def _llm_explain(content: str, norm_path: str, config=None, model: str = None) -> str:
-    """Use the z.ai LLM to generate a natural language explanation of the file."""
+def _llm_explain(content, norm_path, config=None, model=None):
+    """Use the z.ai LLM to generate a natural language explanation."""
     import os
-    from pathlib import Path as _Path
     from dotenv import load_dotenv
 
-    load_dotenv()  # project-local .env
-    load_dotenv(dotenv_path=_Path.home() / ".embex" / ".env", override=False)  # global fallback
+    load_dotenv()
+    load_dotenv(dotenv_path=Path.home() / ".embex" / ".env", override=False)
 
     cfg_model = config.llm.model if config else "glm-4.7-flash"
     cfg_api_key_env = config.llm.api_key_env if config else "ZAI_API_KEY"
@@ -102,7 +101,7 @@ def _llm_explain(content: str, norm_path: str, config=None, model: str = None) -
     api_key = os.environ.get(cfg_api_key_env, "")
 
     if not api_key:
-        return f"[red]Error:[/red] {cfg_api_key_env} not found. Set it in your .env file or environment."
+        return f"[red]Error:[/red] {cfg_api_key_env} not found. Set it in your .env file."
 
     try:
         from openai import OpenAI
@@ -112,7 +111,7 @@ def _llm_explain(content: str, norm_path: str, config=None, model: str = None) -
             base_url="https://api.z.ai/api/paas/v4/",
         )
 
-        # GLM models support large context; cap at 12 000 chars to be safe
+        # Limit code length to avoid token limits
         max_chars = 12_000
         truncated = content[:max_chars]
         if len(content) > max_chars:
@@ -141,19 +140,18 @@ def _llm_explain(content: str, norm_path: str, config=None, model: str = None) -
         )
 
         msg = response.choices[0].message
-        result = msg.content or getattr(msg, "reasoning_content", None) or "No response generated."
-        return result
+        return msg.content or getattr(msg, "reasoning_content", None) or "No response generated."
 
     except Exception as e:
-        return f"[red]LLM Error (z.ai):[/red] {e}"
+        return f"[red]LLM Error:[/red] {e}"
 
 
 def explain_command(
-    file_path: str = typer.Argument(..., help="Relative path to the file to explain."),
+    file_path: str = typer.Argument(..., help="Path to the file to explain."),
     llm: bool = typer.Option(False, "--llm", "-l", help="Use LLM for a richer explanation."),
-    model: str = typer.Option(None, "--model", "-m", help="Override GLM model name (e.g. glm-4-flash, glm-4)."),
-) -> None:
-    """Summarize what a file does — static analysis or LLM-powered (z.ai)."""
+    model: str = typer.Option(None, "--model", "-m", help="Override LLM model name."),
+):
+    """Summarize what a file does — static analysis or LLM-powered."""
     try:
         project_root = find_project_root()
     except FileNotFoundError:
@@ -174,10 +172,10 @@ def explain_command(
         info(f"File '{norm_path}' is empty.")
         raise typer.Exit(0)
 
-    # Static analysis
+    # Run static analysis
     summary_parts = _static_analysis(content, norm_path)
 
-    # Find related files via embeddings
+    # Find related files using embeddings
     try:
         embedder = Embedder(config)
         vector_store = VectorStore(chroma_path(project_root))
@@ -193,9 +191,9 @@ def explain_command(
                     seen.add(rp)
                     summary_parts.append(f"  [dim]•[/dim] {rp} (similarity: {r['score']:.3f})")
     except Exception:
-        pass  # Non-critical — skip if embeddings fail
+        pass  # not critical if embeddings fail
 
-    # LLM explanation
+    # LLM explanation (optional)
     if llm:
         final_model = model or config.llm.model
         summary_parts.append(f"\n[bold cyan]═══ LLM Analysis (z.ai:{final_model}) ═══[/bold cyan]")

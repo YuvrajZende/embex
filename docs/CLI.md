@@ -6,14 +6,14 @@ Complete reference for all `embex` commands.
 
 ## `embex init`
 
-Initializes Embex in a project directory. Creates `.embex/`, scans every code file, embeds them (skipping unchanged files on re-runs via checksum cache), and stores everything locally.
+Initializes Embex in a project directory. Creates `.embex/`, scans every code file, embeds them (skipping unchanged files via checksum cache), and stores everything locally.
+
+Re-running `embex init` is fully idempotent — no prompt, no forced re-embed. It skips files whose content hasn't changed, processes new or modified files, and **automatically removes deleted files from both ChromaDB and the checksum cache**.
 
 ```bash
 embex init                          # initialize current directory
 embex init C:\Projects\my-app       # initialize a specific path
 ```
-
-Re-running `embex init` on an already-initialized project will prompt you before re-scanning. Only files whose content has changed since the last embed will be re-processed.
 
 ---
 
@@ -177,7 +177,7 @@ Embex asks for confirmation before overwriting. After restore, the watcher won't
 
 ## `embex status`
 
-Shows what's inside the Embex database.
+Shows the **current database contents** — what's in ChromaDB (collections, chunk counts) and what's tracked in SQLite (files and their version counts). Use this to verify that Embex has correctly indexed your project.
 
 ```bash
 embex status
@@ -211,7 +211,7 @@ embex search "api_key" --folder src/config
 
 ## `embex stats`
 
-Project-wide statistics: file count, database size, most-changed files.
+Shows **aggregate project health metrics** — total file count, database disk usage, and a leaderboard of the most frequently changed files. Use this to understand storage growth and identify churn hotspots. Complements `status` (which shows per-file detail) with project-wide numbers.
 
 ```bash
 embex stats

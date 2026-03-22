@@ -1,23 +1,12 @@
 """
-embex watch — live file watcher that re-embeds on save.
-
-Runs in the foreground, listening for file changes via watchdog.
+embex watch — watches for file changes and re-embeds automatically.
 """
 
-from __future__ import annotations
-
 import time
-from pathlib import Path
-
 import typer
 from watchdog.observers import Observer
 
-from embex.config import (
-    find_project_root,
-    load_config,
-    chroma_path,
-    history_db_path,
-)
+from embex.config import find_project_root, load_config, chroma_path, history_db_path
 from embex.core.embedder import Embedder
 from embex.core.vector_store import VectorStore
 from embex.core.history_store import HistoryStore
@@ -25,7 +14,7 @@ from embex.core.watcher import EmbexEventHandler
 from embex.utils.display import success, error, info
 
 
-def watch_command() -> None:
+def watch_command():
     """Watch the project for file changes and re-embed automatically."""
     try:
         project_root = find_project_root()

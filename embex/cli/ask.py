@@ -1,20 +1,15 @@
 """
-embex ask — CRAG-powered Q&A over your codebase.
+embex ask — ask a question about your codebase and get an AI-powered answer.
 
-Retrieves the most relevant code chunks, filters for relevance, then
-sends them to the configured LLM (OpenAI / Groq / Ollama) to produce
-a grounded natural-language answer — with citations back to source files.
+Uses RAG (Retrieval-Augmented Generation) to find relevant code chunks
+and sends them to the LLM for a grounded answer with citations.
 
 Usage:
     embex ask "how does authentication work"
     embex ask "where are database queries made" --folder src/db
-    embex ask "explain the chunking strategy" --top-k 10 --no-stream
 """
 
-from __future__ import annotations
-
 from typing import Optional
-
 import typer
 
 from embex.config import find_project_root, load_config, chroma_path
@@ -24,19 +19,17 @@ from embex.core.rag import ask as rag_ask
 from embex.utils.display import console, error, info
 
 from rich.markdown import Markdown
-from rich.panel import Panel
 from rich.rule import Rule
-from rich import box
 
 
 def ask_command(
-    question: str = typer.Argument(..., help="Natural language question about your codebase."),
-    top_k: int = typer.Option(8, "--top-k", "-k", help="Number of chunks to retrieve initially."),
-    folder: Optional[str] = typer.Option(None, "--folder", "-f", help="Scope search to a specific folder."),
-    threshold: float = typer.Option(0.30, "--threshold", "-t", help="Minimum similarity score (0-1) for relevance."),
-    show_sources: bool = typer.Option(True, "--sources/--no-sources", help="Show retrieved source chunks."),
-) -> None:
-    """Ask a question about your codebase — get a grounded LLM answer with citations."""
+    question: str = typer.Argument(..., help="Your question about the codebase."),
+    top_k: int = typer.Option(8, "--top-k", "-k", help="Number of chunks to retrieve."),
+    folder: Optional[str] = typer.Option(None, "--folder", "-f", help="Limit search to a folder."),
+    threshold: float = typer.Option(0.30, "--threshold", "-t", help="Minimum similarity score (0-1)."),
+    show_sources: bool = typer.Option(True, "--sources/--no-sources", help="Show source chunks."),
+):
+    """Ask a question about your codebase — get an AI answer with citations."""
     try:
         project_root = find_project_root()
     except FileNotFoundError:
@@ -52,7 +45,6 @@ def ask_command(
         raise typer.Exit(1)
 
     vector_store = VectorStore(chroma_path(project_root))
-
     info(f"Searching codebase for: [bold]{question}[/bold]")
 
     try:
@@ -65,31 +57,27 @@ def ask_command(
             folder=folder,
             relevance_threshold=threshold,
         )
-    except EnvironmentError as exc:
-        error(str(exc))
-        raise typer.Exit(1)
-    except RuntimeError as exc:
+    except (EnvironmentError, RuntimeError) as exc:
         error(str(exc))
         raise typer.Exit(1)
 
-    # ── Display answer ──────────────────────────────────────────────────
+    # Show the answer
     console.print()
     console.print(Rule("[bold green]Answer[/bold green]", style="green"))
     console.print(Markdown(result["answer"]))
 
-    # ── Display sources ─────────────────────────────────────────────────
+    # Show the sources
     if show_sources and result["sources"]:
         console.print()
         console.print(Rule("[bold cyan]Sources[/bold cyan]", style="cyan"))
         total = result["total_retrieved"]
         relevant = result["relevant_count"]
-        fallback_note = (
-            f"[dim](all {total} retrieved — none cleared the {threshold:.0%} threshold)[/dim]"
-            if relevant == 0 and total > 0
-            else f"[dim]({relevant}/{total} above {threshold:.0%} threshold)[/dim]"
-        )
-        console.print(fallback_note)
+        if relevant == 0 and total > 0:
+            console.print(f"[dim](all {total} retrieved — none above {threshold:.0%} threshold)[/dim]")
+        else:
+            console.print(f"[dim]({relevant}/{total} above {threshold:.0%} threshold)[/dim]")
         console.print()
+
         for src in result["sources"]:
             score_color = "green" if src["score"] >= threshold else "yellow"
             console.print(
@@ -99,7 +87,6 @@ def ask_command(
             )
             preview = src.get("preview", "")
             if preview:
-                preview_lines = preview.strip().splitlines()[:3]
-                for line in preview_lines:
+                for line in preview.strip().splitlines()[:3]:
                     console.print(f"    [dim]{line}[/dim]")
             console.print()

@@ -1,13 +1,11 @@
 """
-Detect programming language from file extension.
+Language detection — maps file extensions to programming language names.
 """
-
-from __future__ import annotations
 
 from pathlib import Path
 
-# Extension → language name mapping
-_EXTENSION_MAP: dict[str, str] = {
+# Extension to language name mapping
+EXTENSION_MAP = {
     ".py": "python",
     ".js": "javascript",
     ".ts": "typescript",
@@ -46,10 +44,7 @@ _EXTENSION_MAP: dict[str, str] = {
 }
 
 
-def detect_language(file_path: str | Path) -> str:
-    """Return the language name for a file based on its extension.
-
-    Returns ``"unknown"`` when the extension is not recognised.
-    """
+def detect_language(file_path):
+    """Detect the programming language from the file extension."""
     ext = Path(file_path).suffix.lower()
-    return _EXTENSION_MAP.get(ext, "unknown")
+    return EXTENSION_MAP.get(ext, "unknown")

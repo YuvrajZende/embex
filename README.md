@@ -19,7 +19,7 @@
 ## Install
 
 ```bash
-git clone https://github.com/your-username/embex.git
+git clone https://github.com/YuvrajZende/embex
 cd embex && pip install -e .
 ```
 
@@ -120,7 +120,7 @@ Your codebase
       │
   ┌───┴──────────────────────────────────────┐
   │             Scanner + Chunker            │
-  │  SHA-256 checksum → skip unchanged files │
+  │  SHA-256 → skip unchanged, prune deleted │
   └───┬──────────────────────────────────────┘
       │
   ┌───▼──────────────────────────────────────┐

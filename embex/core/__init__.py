@@ -1,1 +1,1 @@
-"""Embex core engine modules."""
+"""Embex core modules."""

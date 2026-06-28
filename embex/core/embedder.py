@@ -5,7 +5,7 @@ Embedder — generates vector embeddings for text using either OpenAI API or a l
 import os
 
 
-# Max batch size for OpenAI API
+# Max batch size
 MAX_BATCH = 2048
 
 
